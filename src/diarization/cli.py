@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from .audio import read_wav
+from .models import close_vulkan
 from .pipeline import Diarizer
 from .rttm import format_rttm
 
@@ -14,9 +15,17 @@ def main(argv=None):
     parser.add_argument("output", type=Path)
     parser.add_argument("--min-speakers", type=int, default=1)
     parser.add_argument("--max-speakers", type=int)
+    parser.add_argument("--gpu-index", type=int, help="NCNN Vulkan GPU index (default: CPU)")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[2]
-    segments = Diarizer(root, args.min_speakers, args.max_speakers).diarize(read_wav(args.input))
+    diarizer = None
+    try:
+        diarizer = Diarizer(root, args.min_speakers, args.max_speakers, gpu_index=args.gpu_index)
+        segments = diarizer.diarize(read_wav(args.input))
+    finally:
+        del diarizer
+        if args.gpu_index is not None:
+            close_vulkan()
     args.output.write_text(format_rttm(args.input.stem, segments), encoding="utf-8")
 
 

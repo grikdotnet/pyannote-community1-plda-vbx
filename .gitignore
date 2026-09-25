@@ -1,7 +1,6 @@
 # Local environments
-.venv/
-.runtime-venv/
-\.*
+!.gitignore
+.*
 
 
 # Python caches and build output

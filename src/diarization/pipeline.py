@@ -14,11 +14,12 @@ from .vbx import cluster_embeddings
 
 
 class Diarizer:
-    def __init__(self, root: Path, minimum_speakers: int = 1, maximum_speakers: int | None = None):
+    def __init__(self, root: Path, minimum_speakers: int = 1, maximum_speakers: int | None = None,
+                 gpu_index: int | None = None):
         if minimum_speakers < 1 or (maximum_speakers is not None and maximum_speakers < minimum_speakers):
             raise ValueError("speaker bounds must satisfy 1 <= minimum <= maximum")
-        self.segmentation = NCNNModel(root / "models" / "segmentation")
-        self.embedding = EmbeddingModel(root)
+        self.segmentation = NCNNModel(root / "models" / "segmentation", gpu_index=gpu_index)
+        self.embedding = EmbeddingModel(root, gpu_index=gpu_index)
         self.plda = PLDA(root / "models")
         self.minimum_speakers = minimum_speakers
         self.maximum_speakers = maximum_speakers
