@@ -141,20 +141,20 @@ calling `close_vulkan()`. See [NCNN's extractor guidance](https://github.com/Ten
 
 ## Command-line Run
 
-On Windows, create a virtual environment and install the package into it
+Create a virtual environment and install the package into it
 (skip the first command if `.venv` already exists):
 
 ```powershell
 uv venv --python 3.12 .venv
-uv pip install --python .\.venv\Scripts\python.exe -e .
+uv pip install --python .venv/Scripts/python -e .
 ```
 
 Run with that same interpreter:
 
 ```powershell
-.\.venv\Scripts\python.exe -m diarization.cli fixture/dev00.wav dev00.rttm --models-dir models
-.\.venv\Scripts\python.exe -m diarization.cli fixture/ES2005a.wav ES2005a.rttm --models-dir models --min-speakers 1 --max-speakers 8
-.\.venv\Scripts\python.exe -m diarization.cli fixture/dev00.wav dev00-gpu.rttm --models-dir models --gpu-index 0
+.venv/Scripts/python -m diarization.cli fixture/dev00.wav dev00.rttm --models-dir models
+.venv/Scripts/python -m diarization.cli fixture/ES2005a.wav ES2005a.rttm --models-dir models --min-speakers 1 --max-speakers 8
+.venv/Scripts/python -m diarization.cli fixture/dev00.wav dev00-gpu.rttm --models-dir models --gpu-index 0
 ```
 
 Speaker count is estimated automatically. `--min-speakers` and `--max-speakers`
