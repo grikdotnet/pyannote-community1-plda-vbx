@@ -12,6 +12,13 @@ CHUNK_SAMPLES = 10 * SAMPLE_RATE
 STEP_SAMPLES = SAMPLE_RATE
 FRAME_DURATION = 0.0619375
 FRAME_STEP = 0.016875
+
+
+def recording_frame_mask(starts: Sequence[int], frames: int, duration_samples: int) -> np.ndarray:
+    """Mark window frames whose centers fall inside the real recording."""
+    offsets = np.rint(np.asarray(starts) / SAMPLE_RATE / FRAME_STEP).astype(int)
+    times = (offsets[:, None] + np.arange(frames)) * FRAME_STEP + FRAME_DURATION / 2
+    return times < duration_samples / SAMPLE_RATE
 POWERSET = np.array(
     [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, 0, 1], [0, 1, 1]],
     dtype=np.float32,

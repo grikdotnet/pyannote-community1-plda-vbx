@@ -7,14 +7,70 @@ import numpy as np
 import pytest
 
 from diarization.audio import read_wav
-from diarization.embedding import EmbeddingModel, assemble_embeddings, embed_window
+from diarization.embedding import EmbeddingModel, EmbeddingResult, assemble_embeddings, embed_window
 from diarization.models import NCNNModel
-from diarization.pipeline import Diarizer
+from diarization.pipeline import Diarizer, reconstruct
 from diarization.rttm import format_rttm
-from diarization.segmentation import assemble_segmentation, make_windows, segment_window
+from diarization.segmentation import SegmentationResult, assemble_segmentation, make_windows, segment_window
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_reconstruction_retains_two_speech_supported_ids_in_overlapping_windows():
+    activity = np.zeros((2, 100, 1), dtype=np.float32)
+    activity[0, 59:100, 0] = 1
+    activity[1, :41, 0] = 1
+    labels = np.array([[0], [1]], dtype=np.int32)
+
+    turns = reconstruct(activity, labels, [0, 16000], 2.0, minimum=2)
+
+    assert {turn.speaker for turn in turns} == {"speaker_00", "speaker_01"}
+    assert all(0.99 <= turn.start < turn.end <= 1.69 for turn in turns)
+
+
+def test_reconstruction_retains_sparse_speech_diluted_by_window_coverage():
+    activity = np.zeros((3, 180, 1), dtype=np.float32)
+    activity[0, 120, 0] = 1
+    activity[1, 62, 0] = 1
+    labels = np.array([[0], [1], [-2]], dtype=np.int32)
+
+    turns = reconstruct(activity, labels, [0, 16000, 32000], 4.0,
+                        count_threshold=0.6, minimum=2)
+
+    assert {turn.speaker for turn in turns} == {"speaker_00", "speaker_01"}
+    assert all(2.0 <= turn.start < turn.end < 2.1 for turn in turns)
+
+
+def test_padded_activity_does_not_count_as_valid_observation():
+    activity = np.zeros((1, 100, 2), dtype=np.float32)
+    activity[0, :10, 0] = 1
+    activity[0, 80:90, 1] = 1
+    vectors = np.zeros((1, 2, 256), dtype=np.float32)
+    vectors[0, 0, 0] = 1
+    vectors[0, 1, 1] = 1
+    segmentation = SegmentationResult(activity, (0,), 16000)
+    embeddings = EmbeddingResult(vectors, np.ones((1, 2), dtype=bool))
+    diarizer = Diarizer(ROOT / "models", minimum_speakers=2, maximum_speakers=2)
+
+    clustering = diarizer.cluster(segmentation, embeddings)
+    turns = diarizer.reconstruct(np.zeros(16000, dtype=np.float32), segmentation, clustering)
+
+    assert clustering.labels.tolist() == [[0, -2]]
+    assert {turn.speaker for turn in turns} == {"speaker_00"}
+
+
+def test_final_maximum_caps_returned_speaker_ids():
+    activity = np.zeros((1, 30, 3), dtype=np.float32)
+    for slot in range(3):
+        activity[0, slot * 10:(slot + 1) * 10, slot] = 1
+    vectors = np.zeros((1, 3, 256), dtype=np.float32)
+    vectors[0, np.arange(3), np.arange(3)] = 1
+    diarizer = Diarizer(ROOT / "models", minimum_speakers=2, maximum_speakers=2)
+    segmentation = SegmentationResult(activity, (0,), 16000)
+    clustering = diarizer.cluster(segmentation, EmbeddingResult(vectors, np.ones((1, 3), dtype=bool)))
+    turns = diarizer.reconstruct(np.zeros(16000, dtype=np.float32), segmentation, clustering)
+    assert {turn.speaker for turn in turns} == {"speaker_00", "speaker_01"}
 
 
 @pytest.mark.parametrize("samples,starts", [
@@ -101,7 +157,7 @@ def test_empty_activity_skips_embeddings_and_returns_no_segments():
     diarizer.segmentation = SilentSegmentation()
     diarizer.embedding = UnusedEmbedding()
     diarizer.plda = None
-    diarizer.minimum_speakers = 1
+    diarizer.minimum_speakers = 2
     diarizer.maximum_speakers = None
     audio = np.zeros(16000, dtype=np.float32)
     segmentation = diarizer.segment(audio)

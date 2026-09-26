@@ -1,0 +1,3 @@
+# Apply speaker-count bounds to returned turns
+
+`minimum_speakers` and `maximum_speakers` constrain distinct speaker identities in returned turns, not merely the clusters used to initialize VBx. The minimum is capped by the number of valid speaker observations with speech inside the recording; silence therefore returns no speakers. When enough observations exist, the explicit minimum takes precedence over embedding similarity and training-mask quality, even if that splits observations of the same real person. This favors the caller's known speaker count over the model's unconstrained estimate and may reduce diarization accuracy when the caller's bound is wrong.

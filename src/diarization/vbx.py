@@ -5,9 +5,23 @@ included under ``reference/vbx/VBx/VBx.py``. Runtime imports no code from that f
 """
 
 import numpy as np
-from scipy.cluster.hierarchy import cut_tree, fcluster, linkage
+from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.optimize import linear_sum_assignment
 from scipy.special import logsumexp
+
+from .plda import score_in_lda_space
+
+
+def _cut_merges(tree: np.ndarray, observations: int, groups: int) -> np.ndarray:
+    """Cut after a fixed number of merges, regardless of inverted distances."""
+    members = {index: [index] for index in range(observations)}
+    for index, merge in enumerate(tree[:observations - groups]):
+        left, right = int(merge[0]), int(merge[1])
+        members[observations + index] = members.pop(left) + members.pop(right)
+    labels = np.empty(observations, dtype=np.int32)
+    for label, indices in enumerate(sorted(members.values(), key=min)):
+        labels[indices] = label
+    return labels
 
 
 def forward_backward(log_likelihood: np.ndarray, transition: np.ndarray, prior: np.ndarray):
@@ -54,11 +68,13 @@ def refine(features: np.ndarray, psi: np.ndarray, initial: np.ndarray, prior: np
 
 def cluster_embeddings(embeddings: np.ndarray, train_mask: np.ndarray, activity: np.ndarray,
                        plda, minimum: int = 1, maximum: int | None = None) -> tuple[np.ndarray, np.ndarray]:
-    """AHC initialization, VBx refinement, then unique local-to-global assignment."""
+    """AHC initialization, VBx refinement, then local-to-global assignment."""
     chunks, slots, dimension = embeddings.shape
-    valid = np.isfinite(embeddings).all(axis=-1) & (activity.sum(axis=1) > 0)
+    valid = (np.isfinite(embeddings).all(axis=-1) &
+             (np.linalg.norm(np.nan_to_num(embeddings), axis=-1) > 1e-10) &
+             (activity.sum(axis=1) > 0))
     training = train_mask & valid
-    if training.sum() < 2:
+    if training.sum() < max(2, min(minimum, int(valid.sum()))):
         training = valid
     labels = np.full((chunks, slots), -2, dtype=np.int32)
     examples = embeddings[training]
@@ -74,7 +90,7 @@ def cluster_embeddings(embeddings: np.ndarray, train_mask: np.ndarray, activity:
     desired = max(minimum, min(group_count, maximum if maximum is not None else group_count))
     desired = min(desired, len(examples))
     if desired != group_count:
-        groups = cut_tree(tree, n_clusters=desired).ravel()
+        groups = _cut_merges(tree, len(examples), desired)
     _, groups = np.unique(groups, return_inverse=True)
     initial = np.full((len(groups), groups.max() + 1), 1e-6, dtype=np.float64)
     initial[np.arange(len(groups)), groups] = 1
@@ -87,6 +103,7 @@ def cluster_embeddings(embeddings: np.ndarray, train_mask: np.ndarray, activity:
         active = np.argsort(-prior)[:requested]
     weights = posterior[:, active]
     centroids = (weights.T @ examples) / np.maximum(weights.sum(axis=0)[:, None], 1e-8)
+    plda_representatives = (weights.T @ transformed) / np.maximum(weights.sum(axis=0)[:, None], 1e-8)
     centroid_norm = centroids / np.maximum(np.linalg.norm(centroids, axis=1, keepdims=True), 1e-10)
     for chunk in range(chunks):
         slot_indices = np.flatnonzero(valid[chunk])
@@ -97,6 +114,43 @@ def cluster_embeddings(embeddings: np.ndarray, train_mask: np.ndarray, activity:
         similarity = vectors @ centroid_norm.T
         rows, columns = linear_sum_assignment(similarity, maximize=True)
         labels[chunk, slot_indices[rows]] = columns
+        unmatched = np.setdiff1d(slot_indices, slot_indices[rows], assume_unique=True)
+        for slot in sorted(unmatched, key=lambda value: (np.flatnonzero(activity[chunk, :, value])[0], value)):
+            slot_embedding = embeddings[chunk, slot]
+            transformed_slot = plda.transform(slot_embedding[None])
+            scores = score_in_lda_space(transformed_slot, plda_representatives, plda.psi)[0]
+            for cluster in np.argsort(-scores, kind="stable"):
+                assigned = np.flatnonzero(labels[chunk] == cluster)
+                if not np.any((activity[chunk, :, slot] > 0) &
+                              np.any(activity[chunk][:, assigned] > 0, axis=1)):
+                    labels[chunk, slot] = cluster
+                    break
+            if labels[chunk, slot] < 0 and (maximum is None or len(centroids) < maximum):
+                labels[chunk, slot] = len(centroids)
+                centroids = np.vstack((centroids, slot_embedding))
+                plda_representatives = np.vstack((plda_representatives, transformed_slot[0]))
+                centroid_norm = np.vstack((centroid_norm, slot_embedding /
+                                           max(np.linalg.norm(slot_embedding), 1e-10)))
+            elif labels[chunk, slot] < 0:
+                labels[chunk, slot] = int(np.argmax(scores))
+    # VBx and local assignment may leave a requested identity unused, especially
+    # for identical observations in different windows. Give each such identity
+    # a speech-supported observation while retaining every other used identity.
+    target = min(minimum, int(valid.sum()), len(centroids))
+    for missing in range(target):
+        if np.any(labels == missing):
+            continue
+        candidates = []
+        for chunk, slot in np.argwhere(valid):
+            current = labels[chunk, slot]
+            if np.count_nonzero(labels == current) <= 1:
+                continue
+            vector = embeddings[chunk, slot]
+            score = float(vector @ centroid_norm[missing] / max(np.linalg.norm(vector), 1e-10))
+            candidates.append((-score, int(chunk), int(slot)))
+        if candidates:
+            _, chunk, slot = min(candidates)
+            labels[chunk, slot] = missing
     # Stable IDs: first active local speaker occurrence determines the number.
     first: dict[int, tuple[int, int, int]] = {}
     for chunk, slot in np.argwhere(labels >= 0):

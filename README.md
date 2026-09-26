@@ -56,7 +56,11 @@ NumPy array directly to the stages. `segment` returns activity and window starts
 `cluster` returns global labels and centroids; `reconstruct` returns speaker
 turns as `Segment` objects. `diarizer.diarize(audio)` remains a convenience call
 that runs the four stages in order. Writing RTTM is optional. `Diarizer` also accepts `minimum_speakers`,
-`maximum_speakers`, and `gpu_index` arguments.
+`maximum_speakers`, and `gpu_index` arguments. The speaker bounds apply to the
+distinct speaker IDs in the returned turns. The minimum is capped by the number
+of usable local speaker observations with detected speech inside the recording;
+silence returns no speakers. A valid observation counts even when it was excluded
+from the clean-speech training mask.
 
 ## GPU Acceleration
 
@@ -153,8 +157,10 @@ Run with that same interpreter:
 .\.venv\Scripts\python.exe -m diarization.cli fixture/dev00.wav dev00-gpu.rttm --models-dir models --gpu-index 0
 ```
 
-Speaker count is estimated automatically. The optional bounds constrain the
-number of global speaker clusters. Each RTTM line uses the input WAV stem as
+Speaker count is estimated automatically. `--min-speakers` and `--max-speakers`
+bound the distinct speaker IDs in the returned RTTM turns. The minimum is capped
+by usable speaker observations with speech inside the recording, so a silent
+recording produces no speaker lines. Each RTTM line uses the input WAV stem as
 the recording ID.
 
 ## Sources

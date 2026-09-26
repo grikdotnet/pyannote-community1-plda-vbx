@@ -11,7 +11,8 @@ from .models import NCNNModel
 from .plda import PLDA
 from .rttm import Segment
 from .segmentation import (
-    FRAME_DURATION, FRAME_STEP, SegmentationResult, assemble_segmentation, make_windows, segment_window,
+    FRAME_STEP, SegmentationResult, assemble_segmentation, make_windows, recording_frame_mask,
+    segment_window,
 )
 from .vbx import cluster_embeddings
 
@@ -56,8 +57,11 @@ class Diarizer:
             raise ValueError("embeddings do not match segmentation")
         if embeddings.train_mask.shape != embeddings.vectors.shape[:2]:
             raise ValueError("embedding train mask does not match vectors")
+        valid_frames = recording_frame_mask(segmentation.starts, segmentation.activity.shape[1],
+                                            segmentation.duration_samples)
+        activity = segmentation.activity * valid_frames[:, :, None]
         labels, centroids = cluster_embeddings(
-            embeddings.vectors, embeddings.train_mask, segmentation.activity, self.plda,
+            embeddings.vectors, embeddings.train_mask, activity, self.plda,
             minimum=self.minimum_speakers, maximum=self.maximum_speakers,
         )
         return ClusteringResult(labels, centroids)
@@ -76,7 +80,7 @@ class Diarizer:
         turns = self._short_window_assignments(audio, clustering.centroids) if weak_local_separation and len(clustering.centroids) > 1 else None
         count_threshold = 0.6 if weak_local_separation else 0.1
         return reconstruct(activity, clustering.labels, list(segmentation.starts), len(audio) / SAMPLE_RATE,
-                           turns, count_threshold)
+                           turns, count_threshold, minimum=self.minimum_speakers)
 
     def diarize(self, audio: np.ndarray) -> list[Segment]:
         segmentation = self.segment(audio)
@@ -106,7 +110,8 @@ class Diarizer:
 
 
 def reconstruct(activity: np.ndarray, labels: np.ndarray, starts: list[int], duration: float,
-                turns: np.ndarray | None = None, count_threshold: float = 0.5) -> list[Segment]:
+                turns: np.ndarray | None = None, count_threshold: float = 0.5,
+                *, minimum: int = 1) -> list[Segment]:
     clusters = int(labels.max()) + 1
     if clusters <= 0:
         return []
@@ -114,11 +119,12 @@ def reconstruct(activity: np.ndarray, labels: np.ndarray, starts: list[int], dur
     accumulated = np.zeros((frame_count, clusters), dtype=np.float32)
     counts = np.zeros(frame_count, dtype=np.float32)
     coverage = np.zeros(frame_count, dtype=np.float32)
+    valid_frames = recording_frame_mask(starts, activity.shape[1], round(duration * SAMPLE_RATE))
     for chunk_index, start in enumerate(starts):
         offset = round((start / SAMPLE_RATE) / FRAME_STEP)
         for frame in range(activity.shape[1]):
             global_frame = offset + frame
-            if global_frame >= frame_count or global_frame * FRAME_STEP + FRAME_DURATION / 2 >= duration:
+            if global_frame >= frame_count or not valid_frames[chunk_index, frame]:
                 break
             local = activity[chunk_index, frame]
             counts[global_frame] += local.sum()
@@ -139,6 +145,23 @@ def reconstruct(activity: np.ndarray, labels: np.ndarray, starts: list[int], dur
                 if turns[second] >= 0:
                     binary[frame] = False
                     binary[frame, turns[second]] = True
+    supported = np.any(accumulated > 0, axis=0)
+    required = min(minimum, int(supported.sum()))
+    for cluster in np.flatnonzero(supported):
+        if int(binary.any(axis=0).sum()) >= required:
+            break
+        if binary[:, cluster].any():
+            continue
+        candidates = np.flatnonzero(accumulated[:, cluster] > 0)
+        if not len(candidates):
+            continue
+        frame = int(candidates[np.argmax(accumulated[candidates, cluster])])
+        assigned = np.flatnonzero(binary[frame])
+        if len(assigned) >= count[frame]:
+            removable = [int(other) for other in assigned if binary[:, other].sum() > 1]
+            if removable:
+                binary[frame, removable[-1]] = False
+        binary[frame, cluster] = True
     segments = []
     for cluster in range(clusters):
         active = np.flatnonzero(binary[:, cluster])
