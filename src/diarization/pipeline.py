@@ -1,16 +1,25 @@
 """Orchestrate NCNN segmentation, speaker embeddings, VBx, and reconstruction."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from .audio import SAMPLE_RATE, compute_fbank
-from .embedding import EmbeddingModel
+from .embedding import EmbeddingModel, EmbeddingResult, assemble_embeddings, embed_window
 from .models import NCNNModel
 from .plda import PLDA
 from .rttm import Segment
-from .segmentation import CHUNK_SAMPLES, FRAME_DURATION, FRAME_STEP, decode_powerset, segment_audio
+from .segmentation import (
+    FRAME_DURATION, FRAME_STEP, SegmentationResult, assemble_segmentation, make_windows, segment_window,
+)
 from .vbx import cluster_embeddings
+
+
+@dataclass(frozen=True)
+class ClusteringResult:
+    labels: np.ndarray
+    centroids: np.ndarray
 
 
 class Diarizer:
@@ -24,38 +33,56 @@ class Diarizer:
         self.minimum_speakers = minimum_speakers
         self.maximum_speakers = maximum_speakers
 
-    def diarize(self, audio: np.ndarray) -> list[Segment]:
-        scores, starts = segment_audio(audio, self.segmentation)
-        activity = decode_powerset(scores)
-        chunks, frames, slots = activity.shape
-        embeddings = np.full((chunks, slots, 256), np.nan, dtype=np.float32)
-        clean = activity * (activity.sum(axis=-1, keepdims=True) < 2)
-        minimum_frames = int(np.ceil(frames * 1680 / CHUNK_SAMPLES))
-        for chunk_index, start in enumerate(starts):
-            if not np.any(activity[chunk_index]):
-                continue
-            samples = np.zeros(CHUNK_SAMPLES, dtype=np.float32)
-            part = audio[start:start + CHUNK_SAMPLES]
-            samples[:len(part)] = part
-            features = compute_fbank(samples)
-            encoded = self.embedding.encode(features)
-            for slot in range(slots):
-                full_mask = activity[chunk_index, :, slot]
-                if not np.any(full_mask):
-                    continue
-                clean_mask = clean[chunk_index, :, slot]
-                selected = clean_mask if clean_mask.sum() > minimum_frames else full_mask
-                embeddings[chunk_index, slot] = self.embedding.project(encoded, selected)
-        enough_clean = clean.sum(axis=1) >= 0.2 * frames
+    def segment(self, audio: np.ndarray) -> SegmentationResult:
+        results = [segment_window(window, self.segmentation) for window in make_windows(audio)]
+        return assemble_segmentation(results, len(audio))
+
+    def extract_embeddings(self, audio: np.ndarray, segmentation: SegmentationResult) -> EmbeddingResult:
+        if segmentation.duration_samples != len(audio):
+            raise ValueError("segmentation duration does not match audio")
+        if len(segmentation.starts) != len(segmentation.activity):
+            raise ValueError("segmentation windows do not match audio")
+        results = []
+        for window in make_windows(audio):
+            if window.index >= len(segmentation.starts) or window.start != segmentation.starts[window.index]:
+                raise ValueError("segmentation windows do not match audio")
+            results.append(embed_window(window, segmentation.activity[window.index], self.embedding))
+        if len(results) != len(segmentation.starts):
+            raise ValueError("segmentation windows do not match audio")
+        return assemble_embeddings(results, segmentation)
+
+    def cluster(self, segmentation: SegmentationResult, embeddings: EmbeddingResult) -> ClusteringResult:
+        if embeddings.vectors.shape != (len(segmentation.starts), segmentation.activity.shape[2], 256):
+            raise ValueError("embeddings do not match segmentation")
+        if embeddings.train_mask.shape != embeddings.vectors.shape[:2]:
+            raise ValueError("embedding train mask does not match vectors")
         labels, centroids = cluster_embeddings(
-            embeddings, enough_clean, activity, self.plda,
+            embeddings.vectors, embeddings.train_mask, segmentation.activity, self.plda,
             minimum=self.minimum_speakers, maximum=self.maximum_speakers,
         )
+        return ClusteringResult(labels, centroids)
+
+    def reconstruct(self, audio: np.ndarray, segmentation: SegmentationResult,
+                    clustering: ClusteringResult) -> list[Segment]:
+        if segmentation.duration_samples != len(audio):
+            raise ValueError("segmentation duration does not match audio")
+        activity = segmentation.activity
+        if clustering.labels.shape != (len(segmentation.starts), activity.shape[2]):
+            raise ValueError("cluster labels do not match segmentation")
+        if clustering.centroids.ndim != 2 or clustering.centroids.shape[1] != 256:
+            raise ValueError("cluster centroids must have 256 dimensions")
         overlap_rate = np.mean(activity.sum(axis=-1) >= 2)
         weak_local_separation = overlap_rate < 0.01
-        turns = self._short_window_assignments(audio, centroids) if weak_local_separation and len(centroids) > 1 else None
+        turns = self._short_window_assignments(audio, clustering.centroids) if weak_local_separation and len(clustering.centroids) > 1 else None
         count_threshold = 0.6 if weak_local_separation else 0.1
-        return reconstruct(activity, labels, starts, len(audio) / SAMPLE_RATE, turns, count_threshold)
+        return reconstruct(activity, clustering.labels, list(segmentation.starts), len(audio) / SAMPLE_RATE,
+                           turns, count_threshold)
+
+    def diarize(self, audio: np.ndarray) -> list[Segment]:
+        segmentation = self.segment(audio)
+        embeddings = self.extract_embeddings(audio, segmentation)
+        clustering = self.cluster(segmentation, embeddings)
+        return self.reconstruct(audio, segmentation, clustering)
 
     def _short_window_assignments(self, audio: np.ndarray, centroids: np.ndarray) -> np.ndarray:
         """Resolve turns hidden inside a ten-second local speaker slot."""
