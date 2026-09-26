@@ -23,10 +23,12 @@ SOURCES = {
         "url": "https://huggingface.co/welcomyou/pyannote-community-1-onnx-split",
         "revision": "cde44c2db938c8abb755853b9a87cb3179c47803",
     },
-    "community_plda": {
-        "url": "https://huggingface.co/pyannote/speaker-diarization-community-1/tree/main/plda",
-        "revision": None,
-        "status": "local files supplied; upstream revision not recorded",
+    "but_fit_plda": {
+        "url": "https://huggingface.co/BUT-FIT/diarizen-wavlm-large-s80-md/tree/6285693ddd5b38e8229acb93f864f3d04a82bee1/plda",
+        "revision": "6285693ddd5b38e8229acb93f864f3d04a82bee1",
+        "license": "CC-BY-4.0",
+        "license_url": "https://huggingface.co/BUT-FIT/diarizen-wavlm-large-s80-md/blob/6285693ddd5b38e8229acb93f864f3d04a82bee1/plda/LICENSE",
+        "redistributed_via": "https://huggingface.co/pyannote/speaker-diarization-community-1/tree/main/plda",
     },
     "vbx_reference": {
         "url": "https://github.com/BUTSpeechFIT/VBx",
@@ -40,8 +42,8 @@ PATHS = {
     "embedding_encoder": ("reference/pyannote-community-1-onnx-split/embedding_encoder.onnx", "split"),
     "projection_weight": ("models/resnet_seg_1_weight.npy", "split"),
     "projection_bias": ("models/resnet_seg_1_bias.npy", "split"),
-    "plda": ("models/plda.npz", "community_plda"),
-    "xvec_transform": ("models/xvec_transform.npz", "community_plda"),
+    "plda": ("models/plda.npz", "but_fit_plda"),
+    "xvec_transform": ("models/xvec_transform.npz", "but_fit_plda"),
 }
 REFERENCE_PATHS = ("reference/vbx/VBx/VBx.py", "reference/vbx/VBx/diarization_lib.py")
 

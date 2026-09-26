@@ -1,21 +1,22 @@
-# Fixture verification
+## AMI recording comparison
 
-The scorer in `diarization.rttm.score_rttm` integrates exact RTTM interval
-boundaries, uses a global optimal speaker mapping, applies no collar, and
-includes simultaneous speakers in the reference denominator. No speech
-regions are excluded inside the stated evaluation map.
+We validated the NCNN models against FP32 ONNX exports from [FredrikKarlssonSpeech](https://huggingface.co/FredrikKarlssonSpeech/pyannote-speaker-diarization-onnx).
+The ONNX model card reports numerical validation against the original PyTorch checkpoints.
 
-| Recording | Evaluation map (s) | Reference speaker-seconds | Miss (s) | False alarm (s) | Confusion (s) | DER |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `dev00` | full 0–30 | 28.4970 | 2.0898 | 0.3566 | 3.9480 | 22.44% |
-| `ES2005a` | annotated 0–306.608 | 332.3770 | 58.2221 | 14.8463 | 6.1569 | 23.84% |
-| `ES2005a` | full WAV, no UEM | 332.3770 | 58.2221 | 47.8538 | 6.1569 | 33.77% |
+Three AMI recordings—`IS1008a`, `ES2011a`, and `TS3004a`—from the [AMI Corpus Mirror](https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/) were processed with both the default NCNN backend and a reference ONNX backend. The recordings total **56 minutes 43 seconds**, including **40 minutes 45 seconds during which at least one speaker is annotated as speaking**. Both backends used the same PCM16 WAV files.
 
-The ES2005a WAV lasts 477.877 seconds, but its supplied RTTM and the local
-VBx VAD reference end at about 306.6 seconds. The main benchmark uses the
-explicit interval covered by that annotation. The full-WAV diagnostic shows
-the consequence of treating the unannotated tail as negative ground truth;
-the CLI still processes the entire WAV.
+The backends share masked pooling, projection, PLDA/VBx, reconstruction, and RTTM scoring. Tests also check that the split ONNX encoder’s all-active embedding matches the full FredrikKarlssonSpeech ONNX embedding model.
+
+For all three recordings, the ONNX and NCNN backends produced **byte-for-byte identical RTTM files**.
+
+| Meeting | NCNN DER | ONNX DER | RTTM byte-identical |
+| --- | ---: | ---: | --- |
+| IS1008a | 14.74% | 14.74% | yes |
+| ES2011a | 21.20% | 21.20% | yes |
+| TS3004a | 25.85% | 25.85% | yes |
+
+Both runs use the `only_words` references and one full-length UEM per meeting,
+with no collar and overlap included. 
 
 ## FP32 neural parity
 
