@@ -13,7 +13,8 @@ import onnx
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = ROOT / "models" / "manifest.json"
+MODELS = ROOT / "models"
+MANIFEST = MODELS / "manifest.json"
 SOURCES = {
     "fredrik": {
         "url": "https://huggingface.co/FredrikKarlssonSpeech/pyannote-speaker-diarization-onnx",
@@ -30,22 +31,18 @@ SOURCES = {
         "license_url": "https://huggingface.co/BUT-FIT/diarizen-wavlm-large-s80-md/blob/6285693ddd5b38e8229acb93f864f3d04a82bee1/plda/LICENSE",
         "redistributed_via": "https://huggingface.co/pyannote/speaker-diarization-community-1/tree/main/plda",
     },
-    "vbx_reference": {
-        "url": "https://github.com/BUTSpeechFIT/VBx",
-        "revision": None,
-        "status": "local source pinned by SHA-256; git revision unavailable",
-    },
 }
-PATHS = {
-    "segmentation": ("reference/FredrikKarlssonSpeech-pyannote-onnx/segmentation/model.onnx", "fredrik"),
-    "embedding_reference": ("reference/FredrikKarlssonSpeech-pyannote-onnx/embedding/model.onnx", "fredrik"),
-    "embedding_encoder": ("reference/pyannote-community-1-onnx-split/embedding_encoder.onnx", "split"),
-    "projection_weight": ("models/resnet_seg_1_weight.npy", "split"),
-    "projection_bias": ("models/resnet_seg_1_bias.npy", "split"),
-    "plda": ("models/plda.npz", "but_fit_plda"),
-    "xvec_transform": ("models/xvec_transform.npz", "but_fit_plda"),
+REFERENCE_ONNX = {
+    "segmentation": ("reference/FredrikKarlssonSpeech-pyannote-onnx/segmentation/model.onnx", "fredrik", "segmentation/model.onnx"),
+    "embedding_reference": ("reference/FredrikKarlssonSpeech-pyannote-onnx/embedding/model.onnx", "fredrik", "embedding/model.onnx"),
+    "embedding_encoder": ("reference/pyannote-community-1-onnx-split/embedding_encoder.onnx", "split", "embedding_encoder.onnx"),
 }
-REFERENCE_PATHS = ("reference/vbx/VBx/VBx.py", "reference/vbx/VBx/diarization_lib.py")
+ASSET_PATHS = {
+    "projection_weight": ("resnet_seg_1_weight.npy", "split"),
+    "projection_bias": ("resnet_seg_1_bias.npy", "split"),
+    "plda": ("plda.npz", "but_fit_plda"),
+    "xvec_transform": ("xvec_transform.npz", "but_fit_plda"),
+}
 
 
 def sha256(path: Path) -> str:
@@ -61,44 +58,51 @@ def tensor_contract(values):
 
 
 def inventory():
-    assets = {}
-    for name, (relative, source) in PATHS.items():
+    references = {}
+    for name, (relative, source, upstream_path) in REFERENCE_ONNX.items():
         path = ROOT / relative
+        graph = onnx.load(path).graph
+        references[name] = {
+            "url": f"{SOURCES[source]['url']}/blob/{SOURCES[source]['revision']}/{upstream_path}",
+            "sha256": sha256(path),
+            "source": source,
+            "license": "CC-BY-4.0",
+            "inputs": tensor_contract(graph.input),
+            "outputs": tensor_contract(graph.output),
+        }
+
+    assets = {}
+    for name, (relative, source) in ASSET_PATHS.items():
+        path = MODELS / relative
         entry = {
             "path": relative,
             "sha256": sha256(path),
             "source": source,
             "license": "CC-BY-4.0",
         }
-        if path.suffix == ".onnx":
-            graph = onnx.load(path).graph
-            entry["inputs"] = tensor_contract(graph.input)
-            entry["outputs"] = tensor_contract(graph.output)
-        elif path.suffix == ".npy":
+        if path.suffix == ".npy":
             entry["shape"] = list(np.load(path, mmap_mode="r").shape)
         else:
             with np.load(path) as data:
                 entry["arrays"] = {key: {"shape": list(data[key].shape), "dtype": str(data[key].dtype)} for key in data.files}
         assets[name] = entry
     return {
+        "path_base": ".",
         "sources": SOURCES,
+        "reference_models": references,
         "assets": assets,
-        "reference_code": {
-            relative: {"sha256": sha256(ROOT / relative), "license": "Apache-2.0"}
-            for relative in REFERENCE_PATHS
-        },
         "plda_contract": {key: assets["plda"]["arrays"][key]["shape"] for key in ("mu", "tr", "psi")},
         "transform_contract": {key: assets["xvec_transform"]["arrays"][key]["shape"] for key in ("mean1", "lda", "mean2")},
         "tool_versions": {name: importlib.metadata.version(name) for name in ("numpy", "onnx", "onnxruntime", "ncnn", "pnnx", "kaldi-native-fbank")},
         "conversion": {
             name: {
                 extension: {
-                    "path": f"models/{name}.{extension}",
-                    "sha256": sha256(ROOT / f"models/{name}.{extension}"),
+                    "path": f"{name}.{extension}",
+                    "sha256": sha256(MODELS / f"{name}.{extension}"),
                 }
                 for extension in ("param", "bin")
             }
-            if (ROOT / f"models/{name}.param").is_file() and (ROOT / f"models/{name}.bin").is_file()
+            if (MODELS / f"{name}.param").is_file() and (MODELS / f"{name}.bin").is_file()
             else "pending"
             for name in ("segmentation", "embedding_encoder")
         },
@@ -112,9 +116,8 @@ def main():
     current = inventory()
     if args.check:
         recorded = json.loads(MANIFEST.read_text(encoding="utf-8"))
-        for key in ("sources", "assets", "reference_code", "plda_contract", "transform_contract", "tool_versions", "conversion"):
-            if recorded[key] != current[key]:
-                raise SystemExit(f"manifest mismatch: {key}")
+        if recorded != current:
+            raise SystemExit("manifest mismatch")
         print("model manifest verified")
     else:
         MANIFEST.parent.mkdir(parents=True, exist_ok=True)

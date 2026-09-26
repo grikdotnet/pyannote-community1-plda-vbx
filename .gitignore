@@ -1,7 +1,7 @@
 # Local environments
 !.gitignore
 .*
-
+models/
 
 # Python caches and build output
 __pycache__/
