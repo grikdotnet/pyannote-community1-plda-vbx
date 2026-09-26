@@ -79,13 +79,36 @@ def test_diarizer_uses_same_device_for_both_models(monkeypatch, tmp_path):
     assert indices == [("segmentation", 1), ("embedding_encoder", 1)]
 
 
+def test_diarizer_reads_assets_directly_from_models_dir(monkeypatch, tmp_path):
+    requested = []
+
+    class StubModel:
+        def __init__(self, prefix, gpu_index=None):
+            requested.append(prefix)
+
+    monkeypatch.setattr("diarization.pipeline.NCNNModel", StubModel)
+    monkeypatch.setattr("diarization.embedding.NCNNModel", StubModel)
+    monkeypatch.setattr("diarization.embedding.np.load", lambda path: requested.append(path))
+    monkeypatch.setattr("diarization.pipeline.PLDA", lambda path: requested.append(path))
+
+    Diarizer(tmp_path)
+
+    assert requested == [
+        tmp_path / "segmentation",
+        tmp_path / "embedding_encoder",
+        tmp_path / "resnet_seg_1_weight.npy",
+        tmp_path / "resnet_seg_1_bias.npy",
+        tmp_path,
+    ]
+
+
 def test_cli_passes_gpu_index(monkeypatch, tmp_path):
     selected = []
     closed = []
 
     class StubDiarizer:
-        def __init__(self, root, minimum_speakers, maximum_speakers, gpu_index):
-            selected.append(gpu_index)
+        def __init__(self, models_dir, minimum_speakers, maximum_speakers, gpu_index):
+            selected.append((models_dir, gpu_index))
 
         def diarize(self, audio):
             return []
@@ -94,7 +117,13 @@ def test_cli_passes_gpu_index(monkeypatch, tmp_path):
     monkeypatch.setattr("diarization.cli.read_wav", lambda path: None)
     monkeypatch.setattr("diarization.cli.close_vulkan", lambda: closed.append(True))
     output = tmp_path / "output.rttm"
-    main([str(tmp_path / "input.wav"), str(output), "--gpu-index", "1"])
-    assert selected == [1]
+    main([str(tmp_path / "input.wav"), str(output), "--models-dir", str(tmp_path), "--gpu-index", "1"])
+    assert selected == [(tmp_path, 1)]
     assert closed == [True]
     assert output.exists()
+
+
+def test_cli_requires_models_dir(tmp_path):
+    with pytest.raises(SystemExit) as error:
+        main([str(tmp_path / "input.wav"), str(tmp_path / "output.rttm")])
+    assert error.value.code == 2

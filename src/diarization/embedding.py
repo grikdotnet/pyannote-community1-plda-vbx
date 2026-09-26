@@ -40,11 +40,10 @@ def masked_stats_pool(features: np.ndarray, mask: np.ndarray) -> np.ndarray:
 
 
 class EmbeddingModel:
-    def __init__(self, root: Path, gpu_index: int | None = None):
-        self.encoder = NCNNModel(root / "models" / "embedding_encoder", gpu_index=gpu_index)
-        models = root / "models"
-        self.weight = np.load(models / "resnet_seg_1_weight.npy")
-        self.bias = np.load(models / "resnet_seg_1_bias.npy")
+    def __init__(self, models_dir: Path, gpu_index: int | None = None):
+        self.encoder = NCNNModel(models_dir / "embedding_encoder", gpu_index=gpu_index)
+        self.weight = np.load(models_dir / "resnet_seg_1_weight.npy")
+        self.bias = np.load(models_dir / "resnet_seg_1_bias.npy")
 
     def encode(self, fbank: np.ndarray) -> np.ndarray:
         return self.encoder.run(fbank[None])[0]

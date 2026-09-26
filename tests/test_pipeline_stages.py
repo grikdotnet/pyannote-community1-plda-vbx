@@ -31,7 +31,7 @@ def test_window_schedule_preserves_padding_and_stride(samples, starts):
 
 def test_stages_match_diarize_and_preserve_speaker_ids():
     audio = read_wav(ROOT / "fixture" / "dev00.wav")
-    diarizer = Diarizer(ROOT)
+    diarizer = Diarizer(ROOT / "models")
     segmentation = diarizer.segment(audio)
     embeddings = diarizer.extract_embeddings(audio, segmentation)
     clustering = diarizer.cluster(segmentation, embeddings)
@@ -47,7 +47,7 @@ def test_stages_match_diarize_and_preserve_speaker_ids():
 
 def test_shuffled_window_results_assemble_like_sequential_stages():
     audio = read_wav(ROOT / "fixture" / "dev00.wav")[:32000]
-    diarizer = Diarizer(ROOT)
+    diarizer = Diarizer(ROOT / "models")
     windows = list(make_windows(audio))
     segmentation = diarizer.segment(audio)
     window_segments = [segment_window(window, diarizer.segmentation) for window in windows]
@@ -116,7 +116,7 @@ def test_empty_activity_skips_embeddings_and_returns_no_segments():
 def test_threaded_windows_with_worker_owned_models_match_sequential():
     audio = read_wav(ROOT / "fixture" / "dev00.wav")[:16000]
     windows = list(make_windows(audio))
-    diarizer = Diarizer(ROOT)
+    diarizer = Diarizer(ROOT / "models")
     sequential_segmentation = diarizer.segment(audio)
     sequential_embeddings = diarizer.extract_embeddings(audio, sequential_segmentation)
     local = threading.local()
@@ -124,7 +124,7 @@ def test_threaded_windows_with_worker_owned_models_match_sequential():
     def worker_model(name):
         model = getattr(local, name, None)
         if model is None:
-            model = NCNNModel(ROOT / "models" / "segmentation") if name == "segmentation" else EmbeddingModel(ROOT)
+            model = NCNNModel(ROOT / "models" / "segmentation") if name == "segmentation" else EmbeddingModel(ROOT / "models")
             setattr(local, name, model)
         return model
 

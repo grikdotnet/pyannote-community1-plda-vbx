@@ -22,8 +22,8 @@ The NCNN backend produced byte-identical RTTM files to the backend with weights 
 ## Use as a Python library
 
 Install the package in your application's environment as shown under
-[Command-line Run](#command-line-run), then point `Diarizer` at this repository's
-root directory so it can find `models/`:
+[Command-line Run](#command-line-run), then point `Diarizer` at the directory
+that directly contains the model files:
 
 ```python
 from pathlib import Path
@@ -32,10 +32,10 @@ from diarization.audio import read_wav
 from diarization.pipeline import Diarizer
 from diarization.rttm import format_rttm
 
-root = Path(r"path/to/pyannote-ncnn-plda")
+models_dir = Path(r"path/to/pyannote-ncnn-plda/models")
 wav_path = Path("meeting.wav")
 
-diarizer = Diarizer(root)
+diarizer = Diarizer(models_dir)
 audio = read_wav(wav_path)
 segmentation = diarizer.segment(audio)
 embeddings = diarizer.extract_embeddings(audio, segmentation)
@@ -63,7 +63,7 @@ that runs the four stages in order. Writing RTTM is optional. `Diarizer` also ac
 Inference uses the CPU by default. To use a Vulkan GPU from Python, pass its index when creating the diarizer:
 
 ```python
-diarizer = Diarizer(root, gpu_index=0)
+diarizer = Diarizer(models_dir, gpu_index=0)
 ```
 
 This requires a Vulkan-enabled NCNN Python build and a working driver. The selected GPU runs these NCNN models:
@@ -102,12 +102,12 @@ worker = local()
 
 def segment_job(window):
     if not hasattr(worker, "segmentation"):
-        worker.segmentation = NCNNModel(root / "models" / "segmentation")
+        worker.segmentation = NCNNModel(models_dir / "segmentation")
     return segment_window(window, worker.segmentation)
 
 def embed_job(window):
     if not hasattr(worker, "embedding"):
-        worker.embedding = EmbeddingModel(root)
+        worker.embedding = EmbeddingModel(models_dir)
     return embed_window(window, activity_by_index[window.index], worker.embedding)
 
 def run_bounded(pool, job):
@@ -148,9 +148,9 @@ uv pip install --python .\.venv\Scripts\python.exe -e .
 Run with that same interpreter:
 
 ```powershell
-.\.venv\Scripts\python.exe -m diarization.cli fixture/dev00.wav dev00.rttm
-.\.venv\Scripts\python.exe -m diarization.cli fixture/ES2005a.wav ES2005a.rttm --min-speakers 1 --max-speakers 8
-.\.venv\Scripts\python.exe -m diarization.cli fixture/dev00.wav dev00-gpu.rttm --gpu-index 0
+.\.venv\Scripts\python.exe -m diarization.cli fixture/dev00.wav dev00.rttm --models-dir models
+.\.venv\Scripts\python.exe -m diarization.cli fixture/ES2005a.wav ES2005a.rttm --models-dir models --min-speakers 1 --max-speakers 8
+.\.venv\Scripts\python.exe -m diarization.cli fixture/dev00.wav dev00-gpu.rttm --models-dir models --gpu-index 0
 ```
 
 Speaker count is estimated automatically. The optional bounds constrain the

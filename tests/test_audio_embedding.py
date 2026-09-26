@@ -38,7 +38,7 @@ def test_all_active_split_embedding_matches_full_onnx():
     audio = read_wav(ROOT / "fixture" / "dev00.wav")[:160000]
     fbank = compute_fbank(audio)
     assert fbank.shape == (998, 80)
-    actual = EmbeddingModel(ROOT).embed(fbank, np.ones(125, dtype=np.float32))
+    actual = EmbeddingModel(ROOT / "models").embed(fbank, np.ones(125, dtype=np.float32))
     reference = ort.InferenceSession(
         str(ROOT / "reference" / "FredrikKarlssonSpeech-pyannote-onnx" / "embedding" / "model.onnx"),
         providers=["CPUExecutionProvider"],

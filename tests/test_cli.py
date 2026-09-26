@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_cli_meets_overlap_inclusive_der(recording, truth, uem, tmp_path):
     output = tmp_path / f"{recording}.rttm"
     subprocess.run(
-        [sys.executable, "-m", "diarization.cli", str(ROOT / "fixture" / f"{recording}.wav"), str(output)],
+        [sys.executable, "-m", "diarization.cli", str(ROOT / "fixture" / f"{recording}.wav"),
+         str(output), "--models-dir", str(ROOT / "models")],
         check=True,
         cwd=ROOT,
     )
